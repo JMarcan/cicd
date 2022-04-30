@@ -1,5 +1,59 @@
 version: 2.1
-            
+orbs: 
+  slack: circleci/slack@4.9.4 
+
+commands:
+  get-commit-message:
+    description: Get commit message
+    steps:
+      - run:
+          name: Store commit message into variable
+          when: always
+          command: |
+            echo "export COMMIT_MESSAGE=\"$(git log --format=%B -n 1 $CIRCLE_SHA1)\"" > $BASH_ENV
+            source $BASH_ENV
+
+  slack-fail-notify:
+    description: Send fail notification to slack
+    steps:
+      - get-commit-message
+      - slack/notify:
+          channel: C03DMCHUSNN
+          event: fail
+          custom: |
+            {
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": ":red_circle: Job Failed. :red_circle:",
+                    "emoji": true
+                  }
+                },
+                {
+                  "type": "section",
+                    "text": {
+                      "type": "mrkdwn",
+                      "text": "Project: *$CIRCLE_PROJECT_REPONAME ($CIRCLE_BRANCH)* \n\nAuthor: $CIRCLE_USERNAME\nCommit: $COMMIT_MESSAGE\nJob: $CIRCLE_JOB"
+                    }
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "View Job"
+                      },
+                      "url": "${CIRCLE_BUILD_URL}"
+                    }
+                  ]
+                }
+              ]
+            }
+
 jobs:
   build-frontend:
     docker:
@@ -17,6 +71,7 @@ jobs:
       - save_cache:
           paths: [frontend/node_modules]
           key: frontend-build
+      - slack-fail-notify
 
   build-backend:
     docker:
@@ -34,6 +89,7 @@ jobs:
       - save_cache:
           paths: [backend/node_modules]
           key: backend-build
+      - slack-fail-notify
 
   test-frontend:
     docker:
@@ -48,6 +104,7 @@ jobs:
             cd frontend
             npm install
             npm run test
+      - slack-fail-notify
                 
   test-backend:
     docker:
@@ -62,6 +119,7 @@ jobs:
             cd backend
             npm install
             npm run test
+      - slack-fail-notify
 
   scan-frontend:
     docker:
@@ -78,6 +136,7 @@ jobs:
             npm audit fix --audit-level=critical --force
             npm audit fix --audit-level=critical --force
             npm audit --audit-level=critical
+      - slack-fail-notify
 
   scan-backend:
     docker:
@@ -94,6 +153,7 @@ jobs:
             npm audit fix --audit-level=critical --force
             npm audit fix --audit-level=critical --force
             npm audit --audit-level=critical
+      - slack-fail-notify
 
             
 
