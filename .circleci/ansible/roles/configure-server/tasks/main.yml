@@ -1,0 +1,12 @@
+- name: "update & upgrade packages"
+  become: true
+  apt:
+    update:  "yes"
+    upgrade: "yes"
+
+- name: "nodejs, npm, and pm2"
+  become: true
+  apt:
+    name: ["nodejs", "npm", "pm2"]
+    state: latest
+    update_cache: yes
