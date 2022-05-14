@@ -33,10 +33,10 @@ commands:
                 },
                 {
                   "type": "section",
-                    "text": {
-                      "type": "mrkdwn",
-                      "text": "Project: *$CIRCLE_PROJECT_REPONAME ($CIRCLE_BRANCH)* \n\nAuthor: $CIRCLE_USERNAME\nCommit: $COMMIT_MESSAGE\nJob: $CIRCLE_JOB"
-                    }
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "Project: *$CIRCLE_PROJECT_REPONAME ($CIRCLE_BRANCH)* \n\nAuthor: $CIRCLE_USERNAME\nCommit: $COMMIT_MESSAGE\nJob: $CIRCLE_JOB"
+                  }
                 },
                 {
                   "type": "actions",
@@ -53,6 +53,26 @@ commands:
                 }
               ]
             }
+            
+  destroy_environment:
+    description: Destroy Cloud Formation Stacks and infrastructure
+    parameters:
+      when:
+        type: string
+      id:
+        type: string
+    steps:
+      - run:
+          name: Destroy udapeople backend cfn stack
+          command: |
+            aws cloudformation delete-stack --stack-name prj-cicd-backend-<< parameters.id >>
+          when: << parameters.when >>
+      - run:
+          name: Destroy udapeople frontend cfn stack
+          command: |
+            aws s3 rm s3://udapeople-<< parameters.id >> --recursive
+            aws cloudformation delete-stack --stack-name prj-cicd-frontend-<< parameters.id >>
+          when: << parameters.when >>
 
 jobs:
   build-frontend:
@@ -71,6 +91,7 @@ jobs:
       - save_cache:
           paths: [frontend/node_modules]
           key: frontend-build
+
       - slack-fail-notify
 
   build-backend:
@@ -89,7 +110,9 @@ jobs:
       - save_cache:
           paths: [backend/node_modules]
           key: backend-build
+
       - slack-fail-notify
+
 
   test-frontend:
     docker:
@@ -104,6 +127,7 @@ jobs:
             cd frontend
             npm install
             npm run test
+
       - slack-fail-notify
                 
   test-backend:
@@ -119,6 +143,7 @@ jobs:
             cd backend
             npm install
             npm run test
+
       - slack-fail-notify
 
   scan-frontend:
@@ -136,6 +161,7 @@ jobs:
             npm audit fix --audit-level=critical --force
             npm audit fix --audit-level=critical --force
             npm audit --audit-level=critical
+
       - slack-fail-notify
 
   scan-backend:
@@ -153,6 +179,7 @@ jobs:
             npm audit fix --audit-level=critical --force
             npm audit fix --audit-level=critical --force
             npm audit --audit-level=critical
+
       - slack-fail-notify
 
   deploy-infrastructure:
@@ -160,7 +187,10 @@ jobs:
       - image: amazon/aws-cli:2.6.3
     steps:
       - checkout
-
+      - run:
+          name: Install prerequsites
+          command: |
+            yum -y install tar gzip
       - run:
           name: Deploy back-end infrastructure
           command: |
@@ -186,9 +216,46 @@ jobs:
               --output text | tr -d '\n'`
             echo $BACKEND_URL >> .circleci/ansible/inventory.txt
             echo $BACKEND_URL
-      - slack-fail-notify
+      - persist_to_workspace:
+          root: ~/
+          paths:
+            - project/.circleci/ansible/inventory.txt
 
-      # Here's where you will add some code to rollback on failure      
+      - slack-fail-notify
+      - destroy_environment:
+          id: ${CIRCLE_WORKFLOW_ID:0:7}
+          when: on_fail    
+
+  configure-infrastructure:
+    docker:
+      - image: willhallonline/ansible:2.11-alpine-3.15
+    steps:
+      - checkout
+      - add_ssh_keys:
+          fingerprints: 
+            - "24:94:98:1f:06:3c:44:58:6a:cc:50:99:61:db:91:a7:cd:a4:a7:10"
+      - attach_workspace:
+          at: .
+      - run:
+          name: Install dependencies
+          command: |
+            apk add --update ansible
+            ansible --version
+      - run:
+          name: Configure server
+          command: |
+            cd ~/project/.circleci/ansible
+            ansible-playbook  configure-server.yml -i inventory
+      - run:
+          name: Install AWS CLI for rollback
+          when: on_fail
+          command: |
+            pip3 install --upgrade pip && pip3 install awscli
+
+      - slack-fail-notify     
+      - destroy_environment:
+          id: ${CIRCLE_WORKFLOW_ID:0:7}
+          when: on_fail  
 
 workflows:
   default:
@@ -205,3 +272,5 @@ workflows:
           requires: [build-backend]
       - deploy-infrastructure:
           requires: [test-frontend, test-backend, scan-frontend, scan-backend]
+      - configure-infrastructure:
+          requires: [deploy-infrastructure]
