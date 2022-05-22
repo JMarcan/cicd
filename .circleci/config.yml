@@ -97,7 +97,7 @@ commands:
       - run:
           name: Destroy udapeople frontend cfn stack
           command: |
-            aws s3 rm s3://udapeople-<< parameters.id >> --recursive
+            aws s3 rm s3://prj-cicd-frontend<< parameters.id >> --recursive
             aws cloudformation delete-stack --stack-name prj-cicd-frontend-<< parameters.id >>
           when: << parameters.when >>
 
@@ -332,7 +332,91 @@ jobs:
             pip3 install awscli  
       - destroy_environment:
           id: ${CIRCLE_WORKFLOW_ID:0:7}
-          when: on_fail      
+          when: on_fail     
+
+  deploy-frontend:
+    docker:
+      - image: amazon/aws-cli:2.6.3
+    steps:
+      - checkout
+      - run:
+          name: Install dependencies
+          command: |
+            yum -y install tar gzip npm tar
+      - run:
+          name: Get backend url
+          command: |
+            BACKEND_IP=`aws ec2 describe-instances \
+              --query "Reservations[*].Instances[*].[PublicDnsName]" \
+              --filters "Name=tag:Name,Values=backend-${CIRCLE_WORKFLOW_ID:0:7}" \
+              --output text | tr -d '\n'`
+            export API_URL="http://${BACKEND_IP}:3030"
+            echo "${API_URL}"
+            echo API_URL="http://${BACKEND_IP}:3030" >> frontend/.env
+            cat frontend/.env
+      - run:
+          name: Deploy frontend objects
+          command: |
+            cd frontend
+            curl -sL https://rpm.nodesource.com/setup_lts.x | bash -
+            yum install -y nodejs
+            npm install -g npm
+            npm install webpack
+
+            npm run build
+            tar -czvf artifact-"${CIRCLE_WORKFLOW_ID:0:7}".tar.gz dist
+            aws s3 cp dist s3://prj-cicd-${CIRCLE_WORKFLOW_ID:0:7} --recursive
+
+      - slack-fail-notify 
+      - destroy_environment:
+          id: ${CIRCLE_WORKFLOW_ID:0:7}
+          when: on_fail  
+
+  deploy-backend:
+    docker:
+      - image: willhallonline/ansible:2.11-alpine-3.15
+    steps:
+      - checkout
+      - add_ssh_keys:
+          fingerprints: 
+            - "24:94:98:1f:06:3c:44:58:6a:cc:50:99:61:db:91:a7:cd:a4:a7:10"
+      - attach_workspace:
+          at: ~/
+      - run:
+          name: Install dependencies
+          command: |
+            apk add --update ansible
+            apk add gzip
+            apk add curl
+            curl -sL https://deb.nodesource.com/setup_12.x
+            apk add nodejs
+            apk add --update nodejs npm
+      - set-db-environment
+      - run:
+          name: Deploy backend
+          command: |
+            cd backend
+            npm i
+            npm run build
+            cd ..
+            pwd
+            # Zip the directory
+            tar -C backend -czvf backend.tar.gz .
+            cd .circleci/ansible
+            echo "Contents  of the inventory.txt file is -------"
+            cat inventory.txt
+            ansible-playbook -i inventory.txt deploy-backend.yml
+
+      - slack-fail-notify 
+      - run:
+          name: Install AWS CLI for rollback
+          when: on_fail
+          command: |
+            pip3 install --upgrade pip
+            pip3 install awscli    
+      - destroy_environment:
+          id: ${CIRCLE_WORKFLOW_ID:0:7}
+          when: on_fail  
 
 workflows:
   default:
@@ -353,3 +437,7 @@ workflows:
           requires: [deploy-infrastructure]
       - run-migrations:
           requires: [configure-infrastructure]
+      - deploy-frontend:
+          requires: [run-migrations]
+      - deploy-backend:
+          requires: [run-migrations]

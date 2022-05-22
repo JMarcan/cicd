@@ -1,0 +1,12 @@
+---
+- name: extract ertifacts into EC2 instances
+  become_user: ubuntu
+  unarchive:
+    src: /root/project/backend.tar.gz
+    dest: /home/ubuntu
+
+- name: install application
+  shell: |
+    npm install 
+    pm2 stop default 
+    pm2 start npm -- start 
