@@ -524,28 +524,44 @@ jobs:
     steps:
       - checkout
       - run:
-          name: Remove previous deployment
+          name: Destroy previous deployments
           command: |
-            # Get previous deployment stack workflow id
-            export OldWorkflowID=$(aws cloudformation \
-              list-exports --query "Exports[?Name==\`WorkflowID\`].Value" \
-              --no-paginate --output text)
-            echo OldWorkflowID: "${OldWorkflowID}"
-            echo CIRCLE_WORKFLOW_ID "${CIRCLE_WORKFLOW_ID:0:7}"
+            echo "current-deployment-ID: ${CIRCLE_WORKFLOW_ID:0:7}"
 
             export STACKS=($(aws cloudformation list-stacks --query "StackSummaries[*].StackName" \
               --stack-status-filter CREATE_COMPLETE --no-paginate --output text)) 
-            echo Stack names: "${STACKS[@]}"     
+            echo -e existing-stacks: "${STACKS[@]}" 
 
-            # Remove previous deployment
-            if [[ "${OldWorkflowID}" =~ "${STACKS[@]}" ]]
-            then
-              aws s3 rm "s3://prj-cid-${OldWorkflowID}" --recursive
-              aws cloudformation delete-stack --stack-name "prj-cid--backend-${OldWorkflowID}"
-              aws cloudformation delete-stack --stack-name "prj-cid--frontend-${OldWorkflowID}"
-            else
-              echo Nothing to cleanup
-            fi
+            # == Extract stack-ids ==
+            stackIDs=()
+            for stack in "${STACKS[@]}"; do
+              # check if stack belongs to this project
+              if [[ "${stack}" =~ ^prj-cicd- ]]; then
+                #examples: prj-cicd-frontend-a8eb99b, prj-cicd-backend-a8eb99b
+                stackID=${stack##*-}
+  
+                # add stack id to the stackIDs array if not already there
+                if ! [[ " ${stackIDs[@]} " =~ " ${stackID} " ]]; then
+                  stackIDs+=(${stackID})
+                fi
+              fi
+            done
+            echo -e extracted stack-IDs: "${stackIDs[@]}" '\n'  
+
+            # == Destroy previous deployments ==
+            for stackID in "${stackIDs[@]}"
+            do
+              #destroy stacks that belong to this project, but are not the currently deployed stack, by comparing their deployment ids (e.g. a8eb99b)
+              if [[ "${stackID}" =~ "${CIRCLE_WORKFLOW_ID:0:7}"$ ]]; then
+                echo skipping from destroying stackID: "$stackID" as it is the latest deployment
+              else
+                echo destroying stackID: "$stackID"
+                bucket_name="prj-cicd-${stackID}"
+                aws s3 rm s3://"${bucket_name}" --recursive
+                aws cloudformation delete-stack --stack-name "prj-cicd-backend-$stackID"
+                aws cloudformation delete-stack --stack-name "prj-cicd-frontend-$stackID"
+              fi
+            done
 
 
 workflows:
