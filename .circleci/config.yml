@@ -81,25 +81,47 @@ commands:
               ]
             }
             
-  destroy_environment:
+  destroy-environment:
     description: Destroy Cloud Formation Stacks and infrastructure
     parameters:
       when:
         type: string
-      id:
+      workflow_id:
         type: string
     steps:
       - run:
           name: Destroy udapeople backend cfn stack
           command: |
-            aws cloudformation delete-stack --stack-name prj-cicd-backend-<< parameters.id >>
+            aws cloudformation delete-stack --stack-name prj-cicd-backend-<< parameters.workflow_id >>
           when: << parameters.when >>
       - run:
           name: Destroy udapeople frontend cfn stack
           command: |
-            aws s3 rm s3://prj-cicd-<< parameters.id >> --recursive
-            aws cloudformation delete-stack --stack-name prj-cicd-frontend-<< parameters.id >>
+            aws s3 rm s3://prj-cicd-<< parameters.workflow_id >> --recursive
+            aws cloudformation delete-stack --stack-name prj-cicd-frontend-<< parameters.workflow_id >>
           when: << parameters.when >>
+
+  revert-migrations:
+    description: Revert the last migration
+    parameters:
+      when:
+        type: string
+      workflow_id:
+        type: string      
+    steps:
+      - run:
+          name: Revert migrations
+          when: on_fail
+          command: |
+            # Revert the last migration on the database to return to the way it was before, if a new migration was applied
+            SUCCESS=$(curl --insecure  https://kvdb.io/PMu5wfvhz9uc1oXTWXfWff/migration_<< parameters.workflow_id >>)
+            # Logic for reverting the database state
+            if (( $SUCCESS == 1 ));
+            then
+                cd ~/project/backend
+                npm install
+                npm run migration:revert
+            fi  
 
 jobs:
   build-frontend:
@@ -259,8 +281,8 @@ jobs:
             - project/.circleci/ansible/inventory.txt
 
       - slack-fail-notify
-      - destroy_environment:
-          id: ${CIRCLE_WORKFLOW_ID:0:7}
+      - destroy-environment:
+          workflow_id: ${CIRCLE_WORKFLOW_ID:0:7}
           when: on_fail    
 
   configure-infrastructure:
@@ -291,8 +313,8 @@ jobs:
           command: |
             pip3 install --upgrade pip
             pip3 install awscli    
-      - destroy_environment:
-          id: ${CIRCLE_WORKFLOW_ID:0:7}
+      - destroy-environment:
+          workflow_id: ${CIRCLE_WORKFLOW_ID:0:7}
           when: on_fail  
 
   run-migrations:
@@ -330,8 +352,11 @@ jobs:
             sudo apt install python3.9
             pip3 install --upgrade pip
             pip3 install awscli  
-      - destroy_environment:
-          id: ${CIRCLE_WORKFLOW_ID:0:7}
+      - destroy-environment:
+          workflow_id: ${CIRCLE_WORKFLOW_ID:0:7}
+          when: on_fail     
+      - revert-migrations:
+          workflow_id: ${CIRCLE_WORKFLOW_ID:0:7}
           when: on_fail     
 
   deploy-frontend:
@@ -368,9 +393,12 @@ jobs:
             aws s3 cp dist s3://prj-cicd-${CIRCLE_WORKFLOW_ID:0:7} --recursive
 
       - slack-fail-notify 
-      - destroy_environment:
-          id: ${CIRCLE_WORKFLOW_ID:0:7}
+      - destroy-environment:
+          workflow_id: ${CIRCLE_WORKFLOW_ID:0:7}
           when: on_fail  
+      - revert-migrations:
+          workflow_id: ${CIRCLE_WORKFLOW_ID:0:7}
+          when: on_fail     
 
   deploy-backend:
     docker:
@@ -413,9 +441,12 @@ jobs:
           command: |
             pip3 install --upgrade pip
             pip3 install awscli    
-      - destroy_environment:
-          id: ${CIRCLE_WORKFLOW_ID:0:7}
+      - destroy-environment:
+          workflow_id: ${CIRCLE_WORKFLOW_ID:0:7}
           when: on_fail  
+      - revert-migrations:
+          workflow_id: ${CIRCLE_WORKFLOW_ID:0:7}
+          when: on_fail     
 
   smoke-test:
     docker:
@@ -458,9 +489,12 @@ jobs:
               return 1
             fi
       - slack-fail-notify 
-      - destroy_environment:
-          id: ${CIRCLE_WORKFLOW_ID:0:7}
+      - destroy-environment:
+          workflow_id: ${CIRCLE_WORKFLOW_ID:0:7}
           when: on_fail  
+      - revert-migrations:
+          workflow_id: ${CIRCLE_WORKFLOW_ID:0:7}
+          when: on_fail     
 
 workflows:
   default:
